@@ -188,18 +188,12 @@ forcekill (pid_t pid, DWORD winpid, int sig, int wait)
     }
   if (!wait || WaitForSingleObject (h, 200) != WAIT_OBJECT_0)
     {
-      HANDLE cur = GetCurrentProcess (), h2;
-      /* duplicate handle with access rights required for exit_process_tree() */
-      if (DuplicateHandle (cur, h, cur, &h2, PROCESS_CREATE_THREAD |
-			      PROCESS_QUERY_INFORMATION |
-			      PROCESS_VM_OPERATION |
-			      PROCESS_VM_WRITE | PROCESS_VM_READ |
-			      PROCESS_TERMINATE, FALSE, 0))
-      {
-        CloseHandle(h);
-        h = h2;
-      }
-      exit_process_tree (h2, 128 + sig);
+      if (sig == SIGINT || sig == SIGTERM)
+        kill_process_tree (dwpid, sig);
+      else if (sig && !TerminateProcess (h, sig << 8)
+          && WaitForSingleObject (h, 200) != WAIT_OBJECT_0)
+        fprintf (stderr, "%s: couldn't kill pid %u, %u\n",
+	       prog_name, (unsigned) dwpid, (unsigned int) GetLastError ());
     }
   CloseHandle (h);
 }
