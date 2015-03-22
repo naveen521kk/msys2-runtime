@@ -513,6 +513,7 @@ details. */
        pthread_setaffinity_np, __sched_getaffinity_sys.
   340: Export dbm_clearerr, dbm_close, dbm_delete, dbm_dirfno, dbm_error,
        dbm_fetch, dbm_firstkey, dbm_nextkey, dbm_open, dbm_store.
+  341: Export kill_process_tree.
 
   Note that we forgot to bump the api for ualarm, strtoll, strtoull,
   sigaltstack, sethostname. */
