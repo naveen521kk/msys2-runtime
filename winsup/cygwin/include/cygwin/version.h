@@ -513,12 +513,13 @@ details. */
        pthread_setaffinity_np, __sched_getaffinity_sys.
   340: Export dbm_clearerr, dbm_close, dbm_delete, dbm_dirfno, dbm_error,
        dbm_fetch, dbm_firstkey, dbm_nextkey, dbm_open, dbm_store.
+  341: Export kill_process_tree.
 
   Note that we forgot to bump the api for ualarm, strtoll, strtoull,
   sigaltstack, sethostname. */
 
 #define CYGWIN_VERSION_API_MAJOR 0
-#define CYGWIN_VERSION_API_MINOR 340
+#define CYGWIN_VERSION_API_MINOR 341
 
 /* There is also a compatibity version number associated with the shared memory
    regions.  It is incremented when incompatible changes are made to the shared
