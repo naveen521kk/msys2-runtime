@@ -10,9 +10,15 @@
  * Therefore, we declare the SYMBOL_INFOW structure here, load the dbghelp
  * library via LoadLibraryExA() and obtain the SymInitialize(), SymFromAddrW()
  * and SymCleanup() functions via GetProcAddr().
+ * 
+ * After that a remote thread is injected into that process
+ * to send the exit code.
  */
 
 #include <dbghelp.h>
+
+static int pid;
+static uintptr_t exit_code;
 
 /* Avoid fprintf(), as it would try to reference '__getreent' */
 static void
@@ -29,12 +35,43 @@ output (BOOL error, const char *fmt, ...)
 	     buffer, strlen (buffer), NULL, NULL);
 }
 
+static int
+inject_remote_thread_into_process(HANDLE process, LPTHREAD_START_ROUTINE address, uintptr_t exit_code)
+{
+  int res = -1;
+
+  if (!address)
+    return res;
+  DWORD thread_id;
+  HANDLE thread = CreateRemoteThread(process, NULL, 1024 * 1024, address,
+                                     (PVOID)exit_code, 0, &thread_id);
+  if (thread)
+  {
+    /*
+      * Wait up to 10 seconds (arbitrary constant) for the thread to finish;
+      * After that grace period, fall back to terminating non-gently.
+      */
+    if (WaitForSingleObject(thread, 10000) == WAIT_OBJECT_0)
+      res = 0;
+    CloseHandle(thread);
+  }
+
+  return res;
+}
+
 static WINAPI BOOL
 ctrl_handler(DWORD ctrl_type)
 {
   unsigned short count;
   void *address;
   HANDLE process;
+  HANDLE main_process = OpenProcess(PROCESS_CREATE_THREAD |
+                                        PROCESS_QUERY_INFORMATION |
+                                        PROCESS_VM_OPERATION | PROCESS_VM_WRITE |
+                                        PROCESS_VM_READ,
+                                    FALSE, pid);
+  if (main_process == NULL)
+    return 1;
   PSYMBOL_INFOW info;
   DWORD64 displacement;
 
@@ -43,22 +80,22 @@ ctrl_handler(DWORD ctrl_type)
 				 &address, NULL);
   if (count != 1)
     {
-      output (1, "Could not capture backtrace\n");
+    output (1, "Could not capture backtrace\n");
       return FALSE;
     }
 
   process = GetCurrentProcess ();
   if (!SymInitialize (process, NULL, TRUE))
     {
-      output (1, "Could not initialize symbols\n");
+    output (1, "Could not initialize symbols\n");
       return FALSE;
     }
 
   info = (PSYMBOL_INFOW)
-    malloc (sizeof(*info) + MAX_SYM_NAME * sizeof(wchar_t));
+      malloc (sizeof(*info) + MAX_SYM_NAME * sizeof(wchar_t));
   if (!info)
     {
-      output (1, "Could not allocate symbol info structure\n");
+    output (1, "Could not allocate symbol info structure\n");
       return FALSE;
     }
   info->SizeOfStruct = sizeof(*info);
@@ -66,11 +103,15 @@ ctrl_handler(DWORD ctrl_type)
 
   if (!SymFromAddrW (process, (DWORD64)(intptr_t)address, &displacement, info))
     {
-      output (1, "Could not get symbol info\n");
+    output (1, "Could not get symbol info\n");
       SymCleanup(process);
       return FALSE;
     }
   output (0, "%p\n", (void *)(intptr_t)info->Address);
+
+  /* Inject the remote thread */
+  inject_remote_thread_into_process (main_process, (LPTHREAD_START_ROUTINE)(intptr_t)info->Address, exit_code);
+
   CloseHandle(GetStdHandle(STD_OUTPUT_HANDLE));
   SymCleanup(process);
 
@@ -82,60 +123,62 @@ main (int argc, char **argv)
 {
   char *end;
 
-  if (argc < 2)
+  if (argc < 4)
     {
-      output (1, "Need a function name\n");
+    output (1, "Need a function name, exit code and pid\n");
       return 1;
     }
 
   if (strcmp(argv[1], "CtrlRoutine"))
     {
-      if (argc > 2)
+    if (argc > 4)
         {
-          output (1, "Unhandled option: %s\n", argv[2]);
+      output (1, "Unhandled option: %s\n", argv[4]);
           return 1;
         }
 
-      HINSTANCE kernel32 = GetModuleHandle ("kernel32");
+    HINSTANCE kernel32 = GetModuleHandle ("kernel32");
       if (!kernel32)
         return 1;
-      void *address = (void *) GetProcAddress (kernel32, argv[1]);
+    void *address = (void *) GetProcAddress (kernel32, argv[1]);
       if (!address)
         return 1;
-      output (0, "%p\n", address);
+    output (0, "%p\n", address);
       return 0;
     }
+  exit_code = atoi(argv[2]);
+  pid = atoi(argv[3]);
 
   /* Special-case kernel32!CtrlRoutine */
-  if (argc == 3 && !strcmp ("--alloc-console", argv[2]))
+  if (argc == 5 && !strcmp ("--alloc-console", argv[4]))
     {
-      if (!FreeConsole () && GetLastError () != ERROR_INVALID_PARAMETER)
+    if (!FreeConsole () && GetLastError () != ERROR_INVALID_PARAMETER)
         {
-	  output (1, "Could not detach from current Console: %d\n",
+      output (1, "Could not detach from current Console: %d\n",
 		  (int)GetLastError());
 	  return 1;
 	}
-      if (!AllocConsole ())
+    if (!AllocConsole ())
         {
-	  output (1, "Could not allocate a new Console\n");
+      output (1, "Could not allocate a new Console\n");
 	  return 1;
 	}
     }
-  else if (argc > 2)
+  else if (argc > 4)
     {
-      output (1, "Unhandled option: %s\n", argv[2]);
+    output (1, "Unhandled option: %s\n", argv[4]);
       return 1;
     }
 
   if (!SetConsoleCtrlHandler (ctrl_handler, TRUE))
     {
-      output (1, "Could not register Ctrl handler\n");
+    output (1, "Could not register Ctrl handler\n");
       return 1;
     }
 
   if (!GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0))
     {
-      output (1, "Could not simulate Ctrl+Break\n");
+    output (1, "Could not simulate Ctrl+Break\n");
       return 1;
     }
 

@@ -15,6 +15,7 @@
  * The idea is to inject a thread into the given process that runs either
  * kernel32!CtrlRoutine() (i.e. the work horse of GenerateConsoleCtrlEvent())
  * for SIGINT (Ctrl+C) and SIGQUIT (Ctrl+Break), or ExitProcess() for SIGTERM.
+ * This is handled through the console helpers.
  *
  * For SIGKILL, we run TerminateProcess() without injecting anything, and this
  * is also the fall-back when the previous methods are unavailable.
@@ -47,7 +48,7 @@
 #endif
 
 static LPTHREAD_START_ROUTINE
-get_address_from_cygwin_console_helper(int bitness, wchar_t *function_name)
+get_address_from_cygwin_console_helper_and_inject_remote_thread(int bitness, wchar_t *function_name, int exit_code, DWORD pid)
 {
   const char *name;
   if (bitness == 32)
@@ -57,6 +58,7 @@ get_address_from_cygwin_console_helper(int bitness, wchar_t *function_name)
   else
     return NULL; /* what?!? */
   wchar_t wbuf[PATH_MAX];
+  
   if (cygwin_conv_path (CCP_POSIX_TO_WIN_W, name, wbuf, PATH_MAX) ||
       GetFileAttributesW (wbuf) == INVALID_FILE_ATTRIBUTES)
     return NULL;
@@ -71,11 +73,11 @@ get_address_from_cygwin_console_helper(int bitness, wchar_t *function_name)
 
   STARTUPINFOW si = {};
   PROCESS_INFORMATION pi;
-  size_t len = wcslen (wbuf) + wcslen (function_name) + 1;
+  size_t len = wcslen(wbuf) + 1 + wcslen(function_name) + 1 + (exit_code == 0 ? 1 : (int)(log10(exit_code) + 1)) + 1 + (pid == 0 ? 1 : (int)(log10(pid) + 1));
   WCHAR cmd[len + 1];
   WCHAR title[] = L"cygwin-console-helper";
 
-  swprintf (cmd, len + 1, L"%S %S", wbuf, function_name);
+  swprintf (cmd, len + 1, L"%S %S %d %d", wbuf, function_name, exit_code, pid);
 
   si.cb = sizeof (si);
   si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
@@ -152,7 +154,7 @@ static BOOL get_wow(HANDLE process, BOOL& is_wow, int& bitness)
 }
 
 static LPTHREAD_START_ROUTINE
-get_exit_process_address_for_process(HANDLE process)
+get_exit_process_address_for_process(HANDLE process, int exit_code, DWORD pid)
 {
   BOOL is_wow;
   int bitness;
@@ -176,13 +178,13 @@ get_exit_process_address_for_process(HANDLE process)
   if (!exit_process_address)
     {
       exit_process_address =
-	get_address_from_cygwin_console_helper(bitness, L"ExitProcess");
+	get_address_from_cygwin_console_helper_and_inject_remote_thread(bitness, L"ExitProcess", exit_code, pid);
     }
   return exit_process_address;
 }
 
 static LPTHREAD_START_ROUTINE
-get_ctrl_routine_address_for_process(HANDLE process)
+get_ctrl_routine_address_for_process_and_inject_remote_thread(HANDLE process, int exit_code, DWORD pid)
 {
   BOOL is_wow;
   int bitness;
@@ -194,7 +196,7 @@ get_ctrl_routine_address_for_process(HANDLE process)
       static LPTHREAD_START_ROUTINE ctrl_routine_address;
       if (!ctrl_routine_address)
 	ctrl_routine_address =
-	  get_address_from_cygwin_console_helper(64, L"CtrlRoutine");
+	  get_address_from_cygwin_console_helper_and_inject_remote_thread(64, L"CtrlRoutine", exit_code, pid);
       return ctrl_routine_address;
     }
 
@@ -202,35 +204,11 @@ get_ctrl_routine_address_for_process(HANDLE process)
   if (!ctrl_routine_address)
     {
       ctrl_routine_address =
-	get_address_from_cygwin_console_helper(32, L"CtrlRoutine");
+	get_address_from_cygwin_console_helper_and_inject_remote_thread(32, L"CtrlRoutine", exit_code, pid);
     }
   return ctrl_routine_address;
 }
 
-static int
-inject_remote_thread_into_process(HANDLE process, LPTHREAD_START_ROUTINE address, int exit_code)
-{
-  int res = -1;
-
-  if (!address)
-    return res;
-
-  DWORD thread_id;
-  HANDLE thread = CreateRemoteThread (process, NULL, 1024 * 1024, address,
-				      (PVOID) exit_code, 0, &thread_id);
-  if (thread)
-    {
-      /*
-      * Wait up to 10 seconds (arbitrary constant) for the thread to finish;
-      * After that grace period, fall back to terminating non-gently.
-      */
-      if (WaitForSingleObject (thread, 10000) == WAIT_OBJECT_0)
-          res = 0;
-      CloseHandle (thread);
-    }
-
-  return res;
-}
 
 /**
  * Terminates the process corresponding to the process ID
@@ -240,7 +218,7 @@ inject_remote_thread_into_process(HANDLE process, LPTHREAD_START_ROUTINE address
  * .lock files, terminating spawned processes (if any), etc).
  */
 static int
-exit_one_process(HANDLE process, int exit_code)
+exit_one_process(HANDLE process, int exit_code, DWORD pid)
 {
   LPTHREAD_START_ROUTINE address = NULL;
   int signo = exit_code & 0x7f;
@@ -249,16 +227,14 @@ exit_one_process(HANDLE process, int exit_code)
     {
       case SIGINT:
       case SIGQUIT:
-	address = get_ctrl_routine_address_for_process(process);
-	if (address &&
-	    !inject_remote_thread_into_process(process, address,
-					       signo == SIGINT ?
-					       CTRL_C_EVENT : CTRL_BREAK_EVENT))
+	address = get_ctrl_routine_address_for_process_and_inject_remote_thread(process, signo == SIGINT ?
+					       CTRL_C_EVENT : CTRL_BREAK_EVENT, pid);
+	if (address)
 	  return 0;
 	/* fall-through */
       case SIGTERM:
-	address = get_exit_process_address_for_process(process);
-	if (address && !inject_remote_thread_into_process(process, address, exit_code))
+	address = get_exit_process_address_for_process(process, exit_code, pid);
+	if (address)
 	  return 0;
 	break;
       default:
@@ -358,7 +334,7 @@ exit_process_tree(HANDLE main_process, int exit_code)
       if (process &&
 	  (!GetExitCodeProcess (process, &code) || code == STILL_ACTIVE))
         {
-          if (!exit_one_process (process, exit_code))
+          if (!exit_one_process (process, exit_code, pids[i]))
             ret = -1;
         }
       if (process)
