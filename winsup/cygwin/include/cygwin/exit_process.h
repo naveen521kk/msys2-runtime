@@ -48,7 +48,7 @@
 #endif
 
 static LPTHREAD_START_ROUTINE
-get_address_from_cygwin_console_helper_and_inject_remote_thread(int bitness, wchar_t *function_name, int exit_code, DWORD pid)
+get_address_from_cygwin_console_helper(int bitness, wchar_t *function_name, int exit_code, DWORD pid)
 {
   const char *name;
   if (bitness == 32)
@@ -177,13 +177,13 @@ get_exit_process_address_for_process(HANDLE process, int exit_code, DWORD pid)
   if (!exit_process_address)
     {
       exit_process_address =
-	get_address_from_cygwin_console_helper_and_inject_remote_thread(bitness, L"ExitProcess", exit_code, pid);
+	get_address_from_cygwin_console_helper(bitness, L"ExitProcess",exit_code, pid);
     }
   return exit_process_address;
 }
 
 static LPTHREAD_START_ROUTINE
-get_ctrl_routine_address_for_process_and_inject_remote_thread(HANDLE process, int exit_code, DWORD pid)
+get_ctrl_routine_address_for_process(HANDLE process, int exit_code, DWORD pid)
 {
   BOOL is_wow;
   int bitness;
@@ -195,7 +195,7 @@ get_ctrl_routine_address_for_process_and_inject_remote_thread(HANDLE process, in
       static LPTHREAD_START_ROUTINE ctrl_routine_address;
       if (!ctrl_routine_address)
 	ctrl_routine_address =
-	  get_address_from_cygwin_console_helper_and_inject_remote_thread(64, L"CtrlRoutine", exit_code, pid);
+	  get_address_from_cygwin_console_helper(64, L"CtrlRoutine", exit_code, pid);
       return ctrl_routine_address;
     }
 
@@ -203,7 +203,7 @@ get_ctrl_routine_address_for_process_and_inject_remote_thread(HANDLE process, in
   if (!ctrl_routine_address)
     {
       ctrl_routine_address =
-	get_address_from_cygwin_console_helper_and_inject_remote_thread(32, L"CtrlRoutine", exit_code, pid);
+	get_address_from_cygwin_console_helper(32, L"CtrlRoutine", exit_code, pid);
     }
   return ctrl_routine_address;
 }
@@ -226,7 +226,7 @@ exit_one_process(HANDLE process, int exit_code, DWORD pid)
     {
       case SIGINT:
       case SIGQUIT:
-	address = get_ctrl_routine_address_for_process_and_inject_remote_thread(process, signo == SIGINT ?
+	address = get_ctrl_routine_address_for_process(process, signo == SIGINT ?
 					       CTRL_C_EVENT : CTRL_BREAK_EVENT, pid);
 	if (address)
 	  return 0;
