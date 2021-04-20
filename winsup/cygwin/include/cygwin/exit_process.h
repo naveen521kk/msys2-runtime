@@ -58,7 +58,6 @@ get_address_from_cygwin_console_helper_and_inject_remote_thread(int bitness, wch
   else
     return NULL; /* what?!? */
   wchar_t wbuf[PATH_MAX];
-  
   if (cygwin_conv_path (CCP_POSIX_TO_WIN_W, name, wbuf, PATH_MAX) ||
       GetFileAttributesW (wbuf) == INVALID_FILE_ATTRIBUTES)
     return NULL;
@@ -73,7 +72,7 @@ get_address_from_cygwin_console_helper_and_inject_remote_thread(int bitness, wch
 
   STARTUPINFOW si = {};
   PROCESS_INFORMATION pi;
-  size_t len = wcslen(wbuf) + 1 + wcslen(function_name) + 1 + (exit_code == 0 ? 1 : (int)(log10(exit_code) + 1)) + 1 + (pid == 0 ? 1 : (int)(log10(pid) + 1));
+  size_t len = wcslen (wbuf) + wcslen (function_name) + 1;
   WCHAR cmd[len + 1];
   WCHAR title[] = L"cygwin-console-helper";
 
