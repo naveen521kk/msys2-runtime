@@ -159,6 +159,7 @@ exit_process (HANDLE process, int exit_code)
 {
   LPTHREAD_START_ROUTINE address = NULL;
   DWORD pid = GetProcessId (process), code;
+  printf("%ld",pid);
   int signo = exit_code & 0x7f;
   switch (signo)
     {
