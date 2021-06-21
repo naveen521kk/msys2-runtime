@@ -83,7 +83,9 @@ kill_via_console_helper (HANDLE process, wchar_t *function_name, int exit_code,
 
   swprintf (cmd, len + 1, L"%S %S %d %ld", wbuf, function_name, exit_code,
             pid);
-
+  
+  small_printf("%s", cmd)
+  
   si.cb = sizeof (si);
   si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
   si.wShowWindow = SW_HIDE;
